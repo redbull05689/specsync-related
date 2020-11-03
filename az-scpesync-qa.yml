@@ -1,0 +1,104 @@
+trigger:
+  branches:
+    include:
+      - specsync
+  paths:
+    include:
+    - qa/automation/BiologyEditor.Automation.Scenarios/*
+    exclude:
+    - qa/automation/BiologyEditor.Automation.Scenarios/specsync.json
+
+jobs:
+  # Job to run some internal tasks and publish ops-tools and python API
+  - job: prepare
+    displayName: "Prepare"
+    pool:
+      vmImage: "ubuntu-latest"
+    steps:
+      - task: Bash@3
+        displayName: "Get version"
+        name: getVersion
+        inputs:
+          filePath: $(Build.Repository.LocalPath)/ops-tools/az-scripts/get-version.sh
+
+        # Job for running specsync tool
+  - job: specsync
+    displayName: "specsync tasks"
+    dependsOn:
+    - prepare
+    condition: 
+    #and( eq(dependencies.prepare.outputs['getChanges.QA_AUTO_SCENARIO_CHANGED'], 'true'),eq(variables['system.pullRequest.targetBranch'], 'refs/heads/qa-specsync'), eq(variables['Build.Reason'], 'PullRequest'), eq(dependencies.prepare.outputs['getChanges.QA_AUTO_SCENARIO_CHANGED'], 'true')) 
+    pool:
+      vmImage: "windows-2019"
+    steps:
+    - checkout: none
+
+    - task: Docker@2
+      displayName: Login to ACR
+      inputs:
+        command: login
+        containerRegistry: 'reg'
+
+    - task: Bash@3
+      displayName: 'Clone repository'
+      inputs:
+        targetType: 'inline'
+        script: |
+          
+          git clone -b specsync https://$(TOKEN)@aan.visualstudio.com/Biology%20Editor/_git/Biology%20Editor
+          
+        workingDirectory: $(System.DefaultWorkingDirectory)         
+    
+    
+    - task: Bash@3
+      displayName: 'Set token for SpecSync QA tool'
+      inputs:
+        targetType: 'inline'
+        script: |
+          sed -i  "s|\"user\":.*|\"user\": \"$(System.AccessToken)\",|g" specsync.json
+          echo '******'
+        workingDirectory: $(System.DefaultWorkingDirectory)/Biology%20Editor/qa/automation/BiologyEditor.Automation.Scenarios/      
+ 
+    - task: Docker@2
+      displayName: Pull image
+      inputs:
+        command: pull
+        containerRegistry: 'reg'
+        arguments: someregistry.io/specsync:ltsc2019
+      continueOnError: True
+
+    - task: Docker@2
+      displayName: Run container
+      inputs:
+        command: run
+        containerRegistry: 'reg'
+        arguments: -d --name specsync  ireg.azurecr.io/specsync:ltsc2019 powershell -command "Start-Sleep -s 500"
+        workingDirectory: $(System.DefaultWorkingDirectory)/Biology%20Editor/qa/automation/
+      continueOnError: True
+
+    - powershell: |     
+        docker stop specsync
+        docker cp .\BiologyEditor.Automation.Scenarios\ specsync:c:\app
+        docker start specsync
+
+        Write-Host "Run specsync"
+        docker exec specsync C:\Debug\SpecSync4AzureDevOps.exe push C:\app\BiologyEditor.Automation.Scenarios\specsync.json
+
+        docker stop specsync
+        Remove-item .\BiologyEditor.Automation.Scenarios\ -Recurse -Force -EA SilentlyContinue
+        
+        git branch
+        docker cp specsync:c:\app\BiologyEditor.Automation.Scenarios\ .
+        git config --global user.email "Auto@domain.com"
+        git config --global user.name "SpecSync Job"
+
+        git add .\BiologyEditor.Automation.Scenarios\
+
+        git commit -am "Automated commit" 
+        Write-Host "Show git logs" 
+        git log --oneline | tail -n 5  
+        Write-Host "Run git push" 
+        git push origin specsync
+        docker rm specsync -f
+      workingDirectory: $(System.DefaultWorkingDirectory)/Biology%20Editor/qa/automation
+      displayName: Run specsync
