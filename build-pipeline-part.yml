@@ -1,0 +1,31 @@
+  - job: qa
+    displayName: "Merge qa scenarios to specsync branch"
+    pool:
+      vmImage: "ubuntu-latest"
+    dependsOn:
+    - prepare
+    - internal
+    condition: and(eq(dependencies.prepare.outputs['getChanges.QA_SCENARIOS_CHANGED'], 'true'), ne(variables['Build.Reason'], 'PullRequest'))
+    steps:
+      - checkout: self
+        persistCredentials: true
+
+      - task: Bash@3
+        displayName: "Merge to specsync branch"
+        inputs:
+          targetType: 'inline'
+          script: |
+            git config --global user.email "Auto@aan.com"
+            git config --global user.name "SpecSync Job"
+            echo "status"
+            git status
+            echo "checkout"
+            git checkout specsync
+            echo "merge"
+            git merge origin/develop -m "azure devops pipeline: merge tests scenarios"
+            echo "Automatically  resolve conflits"
+            git checkout --theirs . && git add . && git commit -m "Resolve conflicts automatically"
+            echo "status"
+            git status
+            echo "push"
+            git push origin specsync
